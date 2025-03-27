@@ -1,121 +1,107 @@
-```markdown
 # MCP Gemini Chat CLI 💬
 
-This is a simple command-line interface (CLI) chat application powered by Google's Gemini model (specifically `gemini-2.0-flash-001` by default). It acts as an MCP (Model Context Protocol) host, allowing it to connect to one or more MCP servers and leverage the tools they provide directly within the chat interface.
+A simple command-line interface (CLI) chat application powered by Google's Gemini model that acts as an MCP (Model Context Protocol) host.
 
 ## ✨ Features
 
-- **Gemini Powered:** Uses the Gemini API for conversational responses.
-- **MCP Host:** Acts as a host for MCP servers.
-- **MCP Client Integration:** Includes an MCP client to connect to and interact with MCP servers.
-- **Dynamic Tool Discovery:** Automatically discovers and makes tools available to Gemini from any connected MCP server.
-- **Multi-Server Support:** Can connect to multiple MCP servers simultaneously at startup.
-- **🚀 Runtime Server Addition:** Connect to new MCP servers while the chat app is running using the `add_server` command!
-- **Simple CLI:** Easy-to-use command-line interface for interaction.
-
-## 🌊 Flow of Calls
-
-Here's how the application handles user input:
-
-**1. Basic Chat (No Tool Usage):**
-```
-
-User Input -> MCP Gemini Chat App (Gemini Client) -> Gemini API -> MCP Gemini Chat App -> Display to User
-
-```
-
-**2. Chat with Tool Usage (e.g., Calculator or Weather):**
-
-```
-
-User Input -> MCP Gemini Chat App (Gemini Client) -> Gemini API (Decides to use a tool)
-|
-v
-MCP Gemini Chat App (MCP Client) -> MCP Server (e.g., Calculator) -> Executes Tool
-|
-v
-MCP Gemini Chat App (MCP Client) <- Tool Result from MCP Server
-|
-v
-MCP Gemini Chat App (Gemini Client) -> Gemini API (with tool result) -> Gemini API (Synthesizes final response)
-|
-v
-MCP Gemini Chat App -> Display to User
-
-````
+* **🤖 Gemini Powered:** Uses the Gemini API (`gemini-2.0-flash-001` by default) for conversational responses.
+* **🔌 MCP Host & Client:** Connects to and leverages tools from multiple MCP servers.
+* **🔎 Dynamic Tool Discovery:** Automatically discovers available tools from connected servers.
+* **⚡ Runtime Server Management:** Add new MCP servers dynamically while the chat app is running using the `add_server` command.
 
 ## 🛠️ Prerequisites
 
-*   Python 3.10+
-*   `uv` (or `pip`) for package management
-*   A Google Gemini API Key
+* 🐍 Python 3.10+
+* 📦 `uv` (or `pip`) for package management.
+* 🔑 Google Gemini API Key.
 
-## ⚙️ Setup
+## 🚀 Quick Start
 
-1.  **Clone the repository (or create the project directory):**
+1.  **Clone & Enter Directory:**
     ```bash
-    git clone <your-repo-url> # If you have one
+    git clone <your-repo-url> # Replace <your-repo-url> with the actual repo URL
     cd mcp-gemini-chat
-    # Or if you just have the files:
-    # mkdir mcp-gemini-chat
-    # cd mcp-gemini-chat
     ```
 
-2.  **Create and activate a virtual environment:**
+2.  **Create Virtual Environment & Activate:**
     ```bash
     uv venv
+    # On Linux/macOS
     source .venv/bin/activate
-    # On Windows: .venv\Scripts\activate
+    # On Windows
+    # .venv\Scripts\activate
     ```
 
-3.  **Install dependencies:**
+3.  **Install Dependencies:**
+    (Installs `mcp`, `google-genai`, `python-dotenv`, `httpx`)
     ```bash
-    uv add mcp google-genai python-dotenv httpx
+    uv pip install -r requirements.txt
     ```
 
-4.  **Set up your Gemini API Key:**
-    Create a file named `.env` in the project root and add your API key:
-    ```dotenv
-    # .env
-    GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+4.  **Configure API Key:** ⚠️ **Replace `YOUR_GEMINI_API_KEY` with your actual key!**
+    ```bash
+    echo "GEMINI_API_KEY=YOUR_GEMINI_API_KEY" > .env
     ```
 
-## ▶️ Running the Application
+5.  **Run the App:** (Optionally specify MCP server scripts to connect on startup)
+    ```bash
+    # Example assuming the app script is in a 'src' directory
+    python src/mcp_chat_app.py [path/to/server1.py] [path/to/server2.py]
 
-You run the `mcp_chat_app.py` script. You can optionally provide paths to MCP server scripts you want to connect to at startup as command-line arguments. Servers can also be added while the application is running.
+    # Example without servers at startup
+    # python src/mcp_chat_app.py
+    ```
 
-**Example with one server at startup (Weather):**
+## 🌊 Flow of Calls
 
-```bash
-python mcp_chat_app.py mcp_server_weather.py
-````
-
-**Example with two servers at startup (Weather and Calculator):**
-
-```bash
-python mcp_chat_app.py mcp_server_weather.py mcp_server_calc.py
+### Basic Chat Flow (No Tools)
+```
+👤 User Input → 🤖 MCP Gemini Chat App → ✨ Gemini API → 🖥️ Display to User
 ```
 
-**Example starting with no servers (you can add them later):**
+### Tool Usage Flow (e.g., Calculator, Weather)
+1.  👤 User Input → 🤖 MCP Gemini Chat App → ✨ Gemini API
+2.  ✨ Gemini decides to use a tool → 🔌 MCP Client → ⚙️ MCP Server (e.g., Calculator Server)
+3.  ⚙️ Server executes the tool → 📄 Returns result → 🔌 MCP Client
+4.  📄 Result → ✨ Gemini API → 🤔 Synthesizes final response
+5.  🗣️ Final response → 🖥️ Display to User
+
+## ▶️ Usage Guide
+
+### Running the Application
+
+Start the application script, optionally providing paths to MCP server scripts you want to connect to immediately.
 
 ```bash
-python mcp_chat_app.py
+# Start without any initial servers
+python src/mcp_chat_app.py
+
+# Start and connect to specific servers
+python src/mcp_chat_app.py mcp_server_weather.py mcp_server_calc.py
 ```
 
-The application will:
+### Adding MCP Servers
 
-1.  Initialize the Gemini client.
-2.  Attempt to connect to each MCP server script provided at startup (if any).
-3.  List the tools discovered from all connected servers.
-4.  Start the interactive chat prompt.
+You can add more tools by connecting to more MCP servers:
 
-## 💡 Example Usage
-
+**1. At Startup:**
+Provide the paths to your server scripts as command-line arguments when starting `mcp_chat_app.py`:
+```bash
+python src/mcp_chat_app.py path/to/mcp_server_weather.py path/to/mcp_server_calc.py
 ```
-python mcp_chat_app.py mcp_server_calc.py
-# ... (Initialization logs) ...
-# INFO - Successfully prepared 4 tools for Gemini: ['add', 'subtract', 'multiply', 'divide']
 
+**2. At Runtime:**
+Use the `add_server` command within the chat interface:
+```text
+You: add_server path/to/my_other_server.py
+```
+The application will attempt to connect and integrate the tools from the new server.
+
+### Example Session
+
+```text
+$ python src/mcp_chat_app.py mcp_server_calc.py
+# ... Initialization logs ...
 MCP Gemini Chat App
 Enter your message, 'add_server <path>' to add a server, or 'quit' to exit.
 
@@ -123,35 +109,17 @@ You: hi
 Gemini: Hello! How can I help you today?
 
 You: what is 5 plus 12?
-# ... (Logs showing 'add' tool being called) ...
+# ... Tool call logs ...
 Gemini: 5 plus 12 is 17.0.
 
 You: add_server mcp_server_weather.py
-# ... (Logs showing connection attempt) ...
+# ... Connection and tool discovery logs ...
 Gemini: Successfully added server 'mcp_server_weather.py' with tools: ['get_alerts', 'get_forecast']
 
-You: any weather alerts in CA?
-# ... (Logs showing 'get_alerts' tool being called) ...
-Gemini: # ... (Weather alert information or "No active alerts...") ...
+You: any weather alerts in London?
+# ... Tool call logs ...
+Gemini: # ... (Response about weather alerts in London) ...
 
 You: quit
-# ... (Cleanup logs) ...
-```
-
-## ➕ Adding More MCP Servers
-
-You can add more tools by connecting to more MCP servers:
-
-1.  **At Startup:** Provide the path to your server script as a command-line argument when starting `mcp_chat_app.py`:
-
-    ```bash
-    python mcp_chat_app.py mcp_server_weather.py mcp_server_calc.py my_custom_server.py
-    ```
-
-2.  **At Runtime:** Use the `add_server` command within the chat:
-    ```
-    You: add_server path/to/my_other_server.py
-    ```
-
-The chat app will attempt to connect, discover the tools from the new server, and make them available to Gemini for use during the conversation. If a tool with the same name already exists, the new one will be skipped to avoid conflicts.
-
+# ... Cleanup logs ...
+$
