@@ -155,6 +155,3 @@ You can add more tools by connecting to more MCP servers:
 
 The chat app will attempt to connect, discover the tools from the new server, and make them available to Gemini for use during the conversation. If a tool with the same name already exists, the new one will be skipped to avoid conflicts.
 
-```
-
-```
