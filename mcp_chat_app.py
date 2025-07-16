@@ -14,7 +14,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 # Configure logging for the app
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG, # Changed to DEBUG for more verbose output
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -63,24 +63,43 @@ class MCPChatApp:
             raise ValueError(
                 f"Server '{server_script_path}' is already connected.")
 
-        is_python = server_script_path.endswith('.py')
-        is_js = server_script_path.endswith('.js')
-        if not (is_python or is_js):
+        command: str
+        args: List[str]
+        env_vars = os.environ.copy()
+
+        # Define the absolute path to the ServiceNow MCP server's Python executable
+        # !!! IMPORTANT: YOU MUST UPDATE THIS PATH to your specific environment !!!
+        # This path should point to the 'python.exe' inside the .venv\Scripts\
+        # folder of your cloned 'servicenow-mcp-echelon' project.
+        SERVICENOW_MCP_PYTHON_EXE = r"C:\Users\donvi\Documents\GitHub\servicenow-mcp-echelon\.venv\Scripts\python.exe"
+
+        if "servicenow-mcp-echelon" in server_script_path.lower():
+            logger.info(f"Detected ServiceNow MCP server at {server_script_path}. Using specific launch command.")
+            command = SERVICENOW_MCP_PYTHON_EXE
+            args = ["-m", "servicenow_mcp.cli"]
+        elif server_script_path.endswith('.py'):
+            logger.info(f"Detected generic Python server at {server_script_path}. Using current Python executable.")
+            command = sys.executable
+            args = [server_script_path]
+        elif server_script_path.endswith('.js'):
+            logger.info(f"Detected Node.js server at {server_script_path}. Using 'node' command.")
+            command = "node"
+            args = [server_script_path]
+        else:
             logger.warning(
                 f"Unsupported server script type: {server_script_path}. Skipping.")
             raise ValueError(
                 f"Unsupported server script type: {server_script_path}")
 
-        command = "python" if is_python else "node"
         server_params = StdioServerParameters(
             command=command,
-            args=[server_script_path],
-            env=None
+            args=args,
+            env=env_vars
         )
 
         try:
             logger.info(
-                f"Connecting to MCP server: {server_script_path} using '{command}'")
+                f"Connecting to MCP server: {server_script_path} using command: '{command}' with args: {args}")
             stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
             stdio, write = stdio_transport
             session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
@@ -102,11 +121,11 @@ class MCPChatApp:
                     self.mcp_tools.append(tool)
                     self.tool_to_session[tool.name] = session
                     added_tools.append(tool.name)
-                    self.gemini_tools_dirty = True  # Mark as dirty if new tools are added
+                    self.gemini_tools_dirty = True
             return added_tools
         except Exception as e:
             logger.error(
-                f"Failed to connect to or initialize MCP server {server_script_path}: {e}")
+                f"Failed to connect to or initialize MCP server {server_script_path}: {e}", exc_info=True)
             raise
 
     async def add_server_runtime(self, server_script_path: str):
@@ -117,7 +136,6 @@ class MCPChatApp:
                     f"\nGemini: Successfully added server '{server_script_path}' with tools: {added_tools}")
                 all_tool_names = [tool.name for tool in self.mcp_tools]
                 logger.info(f"Total available tools now: {all_tool_names}")
-                # self.gemini_tools_dirty = True # Already set in connect_to_mcp_server if tools are added
             else:
                 print(
                     f"\nGemini: Connected to server '{server_script_path}', but no new, non-conflicting tools were added.")
@@ -145,7 +163,60 @@ class MCPChatApp:
             'boolean': 'BOOLEAN',
             'array': 'ARRAY',
             'object': 'OBJECT',
+            # Add other types if needed
         }
+
+        # Helper function to convert a single MCP schema property to Gemini Schema
+        def _convert_mcp_prop_to_gemini_schema(prop_schema_dict: Dict[str, Any]) -> Optional[genai_types.Schema]:
+            mcp_type = prop_schema_dict.get('type', '').lower()
+            gemini_type_str = type_mapping.get(mcp_type)
+
+            if not gemini_type_str:
+                logger.warning(
+                    f"Unmappable MCP type '{mcp_type}'. Skipping property.")
+                return None
+
+            gemini_schema_kwargs = {
+                "type": gemini_type_str,
+                "description": prop_schema_dict.get('description')
+            }
+
+            if mcp_type == 'array':
+                # --- CRITICAL CHANGE FOR ARRAY TYPE ---
+                # Recursively convert the 'items' schema for arrays
+                mcp_items_schema = prop_schema_dict.get('items')
+                if mcp_items_schema and isinstance(mcp_items_schema, dict):
+                    gemini_items_schema = _convert_mcp_prop_to_gemini_schema(mcp_items_schema)
+                    if gemini_items_schema:
+                        gemini_schema_kwargs["items"] = gemini_items_schema
+                    else:
+                        logger.warning(f"Could not convert 'items' schema for array type '{mcp_type}'. Skipping property.")
+                        return None
+                else:
+                    logger.warning(f"Array type '{mcp_type}' is missing 'items' schema or it's not a dict. Skipping property.")
+                    return None
+            elif mcp_type == 'object':
+                # --- HANDLE NESTED OBJECTS ---
+                gemini_properties_for_object = {}
+                mcp_properties_for_object = prop_schema_dict.get('properties', {})
+                if isinstance(mcp_properties_for_object, dict):
+                    for nested_prop_name, nested_prop_schema_dict in mcp_properties_for_object.items():
+                        if isinstance(nested_prop_schema_dict, dict):
+                            converted_nested_schema = _convert_mcp_prop_to_gemini_schema(nested_prop_schema_dict)
+                            if converted_nested_schema:
+                                gemini_properties_for_object[nested_prop_name] = converted_nested_schema
+                        else:
+                            logger.warning(f"Nested property '{nested_prop_name}' has non-dict schema. Skipping.")
+
+                    gemini_schema_kwargs["properties"] = gemini_properties_for_object
+                    gemini_schema_kwargs["required"] = prop_schema_dict.get('required') # Pass through required for objects
+
+                else:
+                    logger.warning(f"Object type '{mcp_type}' has malformed 'properties'. Skipping property.")
+                    return None
+
+
+            return genai_types.Schema(**gemini_schema_kwargs)
 
         for mcp_tool in self.mcp_tools:
             try:
@@ -162,6 +233,7 @@ class MCPChatApp:
                 logger.debug(
                     f"Processing MCP tool '{mcp_tool.name}' for Gemini. Schema: {mcp_schema_dict}")
 
+                # Ensure top-level is an object
                 if mcp_schema_dict.get('type', '').lower() != 'object':
                     logger.warning(
                         f"MCP tool '{mcp_tool.name}' has non-OBJECT inputSchema ('{mcp_schema_dict.get('type')}'). Skipping for Gemini.")
@@ -177,20 +249,17 @@ class MCPChatApp:
                             f"Property '{prop_name}' in tool '{mcp_tool.name}' has non-dict schema. Skipping property.")
                         continue
 
-                    mcp_type = prop_schema_dict.get('type', '').lower()
-                    gemini_type_str = type_mapping.get(mcp_type)
-
-                    if gemini_type_str:
-                        gemini_properties[prop_name] = genai_types.Schema(
-                            type=gemini_type_str,
-                            description=prop_schema_dict.get('description')
-                        )
+                    # Use the helper function for conversion
+                    gemini_prop_schema = _convert_mcp_prop_to_gemini_schema(prop_schema_dict)
+                    if gemini_prop_schema:
+                        gemini_properties[prop_name] = gemini_prop_schema
                         valid_properties_found = True
                         logger.debug(
-                            f"Successfully mapped property '{prop_name}' of type '{mcp_type}' to Gemini type '{gemini_type_str}' for tool '{mcp_tool.name}'")
+                            f"Successfully mapped property '{prop_name}' for tool '{mcp_tool.name}'")
                     else:
                         logger.warning(
-                            f"Property '{prop_name}' in tool '{mcp_tool.name}' has unmappable MCP type '{mcp_type}'. Skipping property.")
+                            f"Skipping property '{prop_name}' in tool '{mcp_tool.name}' due to conversion failure.")
+
 
                 if valid_properties_found or not mcp_schema_dict.get('properties'):
                     gemini_params_schema = genai_types.Schema(
@@ -318,30 +387,28 @@ class MCPChatApp:
         print("\nMCP Gemini Chat App")
         print("Enter your message, 'add_server <path>' to add a server, or 'quit' to exit.")
         while True:
-            try:
-                query = input("\nYou: ").strip()
-                if query.lower() == 'quit':
-                    break
-                if not query:
-                    continue
+            # Removed the default_prompt logic here
+            query = input("\nYou: ").strip() # Always wait for user input
 
-                if query.lower().startswith("add_server "):
-                    parts = query.split(" ", 1)
-                    if len(parts) == 2 and parts[1]:
-                        server_path = parts[1].strip()
-                        await self.add_server_runtime(server_path)
-                    else:
-                        print("\nGemini: Usage: add_server <path_to_server_script>")
-                else:
-                    response = await self.process_query(query)
-                    print(f"\nGemini: {response}")
-
-            except KeyboardInterrupt:
-                print("\nExiting...")
+            if query.lower() == 'quit':
                 break
-            except Exception as e:
-                logger.error(f"Error in chat loop: {e}")
-                print(f"\nAn error occurred: {e}")
+            if not query:
+                continue
+
+            if query.lower().startswith("add_server "):
+                parts = query.split(" ", 1)
+                if len(parts) == 2 and parts[1]:
+                    server_path = parts[1].strip()
+                    await self.add_server_runtime(server_path)
+                else:
+                    print("\nGemini: Usage: add_server <path_to_server_script>")
+            else:
+                response = await self.process_query(query)
+                print(f"\nGemini: {response}")
+
+            # Removed the exit logic for default_prompt here
+            
+            # ... rest of chat_loop error handling
 
     async def cleanup(self):
         logger.info("Cleaning up resources...")
@@ -350,6 +417,7 @@ class MCPChatApp:
 
 
 async def main():
+    print("--- APP START: Entering main function ---") # ADDED FOR DEBUGGING
     if len(sys.argv) < 2:
         print(
             "Usage: python mcp_chat_app.py [path_to_mcp_server_script1] [path_to_mcp_server_script2] ...")
@@ -361,13 +429,19 @@ async def main():
     app = MCPChatApp()
 
     try:
+        print("--- APP DEBUG: Initializing Gemini client ---") # ADDED FOR DEBUGGING
         await app.initialize_gemini()
+        print("--- APP DEBUG: Gemini client initialized ---") # ADDED FOR DEBUGGING
+
+        if server_scripts: # ADDED FOR DEBUGGING
+            print(f"--- APP DEBUG: Attempting to connect to initial servers: {server_scripts} ---") # ADDED FOR DEBUGGING
         for script in server_scripts:
             try:
                 await app.connect_to_mcp_server(script)
             except Exception as e:
                 print(
                     f"Warning: Failed to connect to initial server {script}: {e}")
+        print("--- APP DEBUG: Finished initial server connections loop ---") # ADDED FOR DEBUGGING
 
         if not app.mcp_sessions:
             logger.warning(
@@ -375,7 +449,6 @@ async def main():
         else:
             logger.info(
                 f"Initially connected to {len(app.mcp_sessions)} MCP server(s).")
-            # This call will now populate the cache if tools are found
             gemini_tools = app.get_gemini_tool_declarations()
             if gemini_tools:
                 logger.info(
@@ -384,7 +457,9 @@ async def main():
                 logger.warning(
                     "No MCP tools could be initially prepared for Gemini.")
 
+        print("--- APP DEBUG: Entering chat loop ---") # ADDED FOR DEBUGGING
         await app.chat_loop()
+        print("--- APP DEBUG: Exited chat loop ---") # ADDED FOR DEBUGGING
 
     except ValueError as e:
         print(f"Initialization Error: {e}")
@@ -393,7 +468,9 @@ async def main():
             f"Critical error during app execution: {e}", exc_info=True)
         print(f"An unexpected critical error occurred: {e}")
     finally:
+        print("--- APP DEBUG: Entering cleanup ---") # ADDED FOR DEBUGGING
         await app.cleanup()
+        print("--- APP END: Cleanup complete, exiting ---") # ADDED FOR DEBUGGING
 
 if __name__ == "__main__":
     asyncio.run(main())
